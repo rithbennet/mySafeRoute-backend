@@ -5,6 +5,9 @@ import { GPSUpdateSchema } from "../../shared/types";
 // Store connected dispatcher clients
 const dispatcherClients: Set<WebSocket> = new Set();
 
+// Store connected dispatch dashboard clients (separate endpoint)
+const dispatchDashboardClients: Set<WebSocket> = new Set();
+
 /**
  * Add a dispatcher client
  */
@@ -22,13 +25,41 @@ export function removeDispatcherClient(socket: WebSocket): void {
 }
 
 /**
- * Broadcast message to all dispatchers
+ * Add a dispatch dashboard client
+ */
+export function addDispatchDashboardClient(socket: WebSocket): void {
+  dispatchDashboardClients.add(socket);
+  console.log(
+    `🚑 Dispatch dashboard connected. Total: ${dispatchDashboardClients.size}`
+  );
+}
+
+/**
+ * Remove a dispatch dashboard client
+ */
+export function removeDispatchDashboardClient(socket: WebSocket): void {
+  dispatchDashboardClients.delete(socket);
+  console.log(
+    `🚑 Dispatch dashboard disconnected. Total: ${dispatchDashboardClients.size}`
+  );
+}
+
+/**
+ * Broadcast message to all dispatchers (both endpoints)
  */
 export function broadcastToDispatchers(data: unknown): void {
   const message = JSON.stringify(data);
+
+  // Broadcast to telemetry clients
   for (const client of dispatcherClients) {
     if (client.readyState === 1) {
-      // OPEN state
+      client.send(message);
+    }
+  }
+
+  // Broadcast to dispatch dashboard clients
+  for (const client of dispatchDashboardClients) {
+    if (client.readyState === 1) {
       client.send(message);
     }
   }

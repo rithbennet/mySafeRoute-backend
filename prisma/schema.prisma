@@ -29,6 +29,30 @@ enum AmbulanceStatus {
   TRANSPORTING
 }
 
+enum IncidentStatus {
+  PENDING
+  DISPATCHED
+  EN_ROUTE
+  ON_SCENE
+  TRANSPORTING
+  COMPLETED
+  CANCELLED
+}
+
+enum IncidentSeverity {
+  LOW
+  HIGH
+}
+
+enum TriageType {
+  STEMI
+  Stroke
+  Trauma
+  Burns
+  Pediatric
+  General
+}
+
 // ============ Models ============
 
 model Hospital {
@@ -38,6 +62,7 @@ model Hospital {
   lng          Float
   capabilities String[] // e.g. ["PCI", "TRAUMA", "STROKE"]
   ambulances   Ambulance[]
+  incidents    Incident[]  @relation("DestinationHospital")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -52,6 +77,47 @@ model Ambulance {
   currentLng Float
   hospitalId Int
   hospital   Hospital        @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  incidents  Incident[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Incident {
+  id         String           @id @default(uuid())
+  lat        Float
+  lng        Float
+  severity   IncidentSeverity @default(LOW)
+  triageType TriageType       @default(General)
+  status     IncidentStatus   @default(PENDING)
+
+  // Assigned ambulance
+  assignedAmbulanceId Int?
+  assignedAmbulance   Ambulance? @relation(fields: [assignedAmbulanceId], references: [id])
+
+  // Destination hospital
+  destinationHospitalId Int?
+  destinationHospital   Hospital? @relation("DestinationHospital", fields: [destinationHospitalId], references: [id])
+
+  // Reporting user (victim)
+  reportedByUserId Int?
+  reportedBy       User? @relation(fields: [reportedByUserId], references: [id])
+
+  // Route and timing info
+  etaSeconds    Int?
+  routeGeometry Json? // GeoJSON LineString
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model User {
+  id        Int        @id @default(autoincrement())
+  name      String
+  phone     String?
+  lat       Float // Last known location
+  lng       Float
+  incidents Incident[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
