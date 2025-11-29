@@ -9,6 +9,86 @@ import { hospitalScoringService } from "../routing";
 import { generateId } from "../../shared/utils";
 import { broadcastToDispatchers } from "../telemetry/WebSocketService";
 
+// Inline schemas for OpenAPI documentation
+const IncidentSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    location: {
+      type: "object",
+      properties: {
+        lat: { type: "number" },
+        lng: { type: "number" },
+      },
+    },
+    triage: {
+      type: "string",
+      enum: ["STEMI", "Stroke", "Trauma", "Burns", "Pediatric", "General"],
+    },
+    status: {
+      type: "string",
+      enum: [
+        "PENDING",
+        "ASSIGNED",
+        "EN_ROUTE",
+        "ARRIVED",
+        "TRANSPORTING",
+        "COMPLETED",
+        "CANCELLED",
+      ],
+    },
+    assignedAmbulanceId: { type: "string", nullable: true },
+    recommendedHospitalId: { type: "string", nullable: true },
+    etaSeconds: { type: "integer", nullable: true },
+    createdAt: { type: "string", format: "date-time" },
+    updatedAt: { type: "string", format: "date-time" },
+  },
+};
+
+const AmbulanceSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    callsign: { type: "string" },
+    type: { type: "string" },
+    status: { type: "string" },
+    location: {
+      type: "object",
+      properties: {
+        lat: { type: "number" },
+        lng: { type: "number" },
+      },
+    },
+  },
+};
+
+const HospitalSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    name: { type: "string" },
+    location: {
+      type: "object",
+      properties: {
+        lat: { type: "number" },
+        lng: { type: "number" },
+      },
+    },
+    capabilities: {
+      type: "array",
+      items: { type: "string" },
+    },
+  },
+};
+
+const ErrorResponseSchema = {
+  type: "object",
+  properties: {
+    success: { type: "boolean" },
+    error: { type: "string" },
+  },
+};
+
 /**
  * Incident Routes
  */
@@ -19,6 +99,27 @@ export async function incidentRoutes(fastify: FastifyInstance) {
    */
   fastify.get(
     "/incidents",
+    {
+      schema: {
+        tags: ["Incidents"],
+        summary: "List all incidents",
+        description:
+          "Returns all incidents including completed and cancelled ones",
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              success: { type: "boolean" },
+              data: {
+                type: "array",
+                items: IncidentSchema,
+              },
+              count: { type: "integer" },
+            },
+          },
+        },
+      },
+    },
     async (_request: FastifyRequest, reply: FastifyReply) => {
       const incidents = db.getIncidents();
       return reply.send({
@@ -35,6 +136,27 @@ export async function incidentRoutes(fastify: FastifyInstance) {
    */
   fastify.get(
     "/incidents/active",
+    {
+      schema: {
+        tags: ["Incidents"],
+        summary: "List active incidents",
+        description:
+          "Returns only incidents that are not completed or cancelled",
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              success: { type: "boolean" },
+              data: {
+                type: "array",
+                items: IncidentSchema,
+              },
+              count: { type: "integer" },
+            },
+          },
+        },
+      },
+    },
     async (_request: FastifyRequest, reply: FastifyReply) => {
       const incidents = db.getActiveIncidents();
       return reply.send({
@@ -51,6 +173,38 @@ export async function incidentRoutes(fastify: FastifyInstance) {
    */
   fastify.get(
     "/incidents/:id",
+    {
+      schema: {
+        tags: ["Incidents"],
+        summary: "Get incident by ID",
+        description:
+          "Returns a specific incident with assigned ambulance and recommended hospital details",
+        params: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Incident ID" },
+          },
+          required: ["id"],
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              success: { type: "boolean" },
+              data: {
+                type: "object",
+                properties: {
+                  incident: IncidentSchema,
+                  assignedAmbulance: AmbulanceSchema,
+                  recommendedHospital: HospitalSchema,
+                },
+              },
+            },
+          },
+          404: ErrorResponseSchema,
+        },
+      },
+    },
     async (
       request: FastifyRequest<{ Params: { id: string } }>,
       reply: FastifyReply
@@ -94,6 +248,74 @@ export async function incidentRoutes(fastify: FastifyInstance) {
    */
   fastify.post(
     "/incidents",
+    {
+      schema: {
+        tags: ["Incidents"],
+        summary: "Create new incident",
+        description: `
+Creates a new emergency incident and automatically recommends the best hospitals based on:
+- Triage type (STEMI, Stroke, Trauma, etc.)
+- Hospital capabilities
+- Distance and ETA
+- Current hospital load
+
+Returns top 3 hospital recommendations with routes.
+        `,
+        body: {
+          type: "object",
+          required: ["location", "triage"],
+          properties: {
+            location: {
+              type: "object",
+              required: ["lat", "lng"],
+              properties: {
+                lat: { type: "number" },
+                lng: { type: "number" },
+              },
+            },
+            triage: {
+              type: "string",
+              enum: [
+                "STEMI",
+                "Stroke",
+                "Trauma",
+                "Burns",
+                "Pediatric",
+                "General",
+              ],
+              description: "Emergency triage type",
+            },
+          },
+        },
+        response: {
+          201: {
+            type: "object",
+            properties: {
+              success: { type: "boolean" },
+              data: {
+                type: "object",
+                properties: {
+                  incident: IncidentSchema,
+                  recommendations: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        hospital: HospitalSchema,
+                        score: { type: "number" },
+                        etaSeconds: { type: "integer" },
+                        distanceMeters: { type: "integer" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          400: ErrorResponseSchema,
+        },
+      },
+    },
     async (
       request: FastifyRequest<{
         Body: { location: { lat: number; lng: number }; triage: string };
@@ -172,6 +394,49 @@ export async function incidentRoutes(fastify: FastifyInstance) {
    */
   fastify.post(
     "/incidents/:id/assign",
+    {
+      schema: {
+        tags: ["Incidents"],
+        summary: "Assign ambulance to incident",
+        description:
+          "Assigns an available ambulance to an incident and updates both statuses",
+        params: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Incident ID" },
+          },
+          required: ["id"],
+        },
+        body: {
+          type: "object",
+          required: ["ambulanceId"],
+          properties: {
+            ambulanceId: {
+              type: "string",
+              description: "ID of the ambulance to assign",
+            },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              success: { type: "boolean" },
+              data: {
+                type: "object",
+                properties: {
+                  incident: IncidentSchema,
+                  ambulance: AmbulanceSchema,
+                },
+              },
+              message: { type: "string" },
+            },
+          },
+          400: ErrorResponseSchema,
+          404: ErrorResponseSchema,
+        },
+      },
+    },
     async (
       request: FastifyRequest<{
         Params: { id: string };
@@ -261,6 +526,50 @@ export async function incidentRoutes(fastify: FastifyInstance) {
    */
   fastify.patch(
     "/incidents/:id/status",
+    {
+      schema: {
+        tags: ["Incidents"],
+        summary: "Update incident status",
+        description:
+          "Update the status of an incident. If completed/cancelled, the assigned ambulance is freed.",
+        params: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Incident ID" },
+          },
+          required: ["id"],
+        },
+        body: {
+          type: "object",
+          required: ["status"],
+          properties: {
+            status: {
+              type: "string",
+              enum: [
+                "PENDING",
+                "ASSIGNED",
+                "EN_ROUTE",
+                "ARRIVED",
+                "TRANSPORTING",
+                "COMPLETED",
+                "CANCELLED",
+              ],
+              description: "New incident status",
+            },
+          },
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              success: { type: "boolean" },
+              data: IncidentSchema,
+            },
+          },
+          404: ErrorResponseSchema,
+        },
+      },
+    },
     async (
       request: FastifyRequest<{
         Params: { id: string };

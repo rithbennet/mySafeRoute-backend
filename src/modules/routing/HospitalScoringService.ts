@@ -1,4 +1,5 @@
-import db from "../../shared/store/Database";
+import { prisma } from "../../shared/store/prisma";
+import type { Hospital as PrismaHospital } from "../../shared/store/prisma";
 import type {
   Location,
   Hospital,
@@ -7,7 +8,21 @@ import type {
 } from "../../shared/types";
 import { getRoutingProvider } from "./RoutingAdapter";
 import { hazardService } from "./HazardService";
-import { getRequiredCapabilities, normalize } from "../../shared/utils";
+import { getRequiredCapabilities } from "../../shared/utils";
+
+/**
+ * Convert Prisma Hospital to API Hospital format
+ */
+function toApiHospital(h: PrismaHospital): Hospital {
+  return {
+    id: String(h.id),
+    name: h.name,
+    location: { lat: h.lat, lng: h.lng },
+    capabilities: h.capabilities as Hospital["capabilities"],
+    status: "OPEN", // Default status since not in DB yet
+    load: 50, // Default load since not in DB yet
+  };
+}
 
 /**
  * Hospital Scoring Service
@@ -87,13 +102,18 @@ export class HospitalScoringService {
 
   /**
    * Get ranked list of hospitals for an incident
+   * Now fetches from Prisma database
    */
   async rankHospitals(
     incidentLocation: Location,
     incidentTriage: TriageType,
     limit: number = 3
   ): Promise<HospitalScore[]> {
-    const hospitals = db.getHospitals();
+    // Fetch hospitals from database
+    const prismaHospitals = await prisma.hospital.findMany();
+
+    // Convert to API format
+    const hospitals = prismaHospitals.map(toApiHospital);
 
     // Calculate scores for all hospitals in parallel
     const scores = await Promise.all(
