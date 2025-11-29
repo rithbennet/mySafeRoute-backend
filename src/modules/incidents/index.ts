@@ -1,0 +1,1 @@
+export { incidentRoutes } from "./routes";

@@ -1,0 +1,1 @@
+export { hospitalRoutes } from "./routes";

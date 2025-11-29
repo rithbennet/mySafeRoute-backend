@@ -1,0 +1,1 @@
+export { ambulanceRoutes } from "./routes";

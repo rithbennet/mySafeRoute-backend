@@ -1,0 +1,1 @@
+export { hazardRoutes } from "./routes";
