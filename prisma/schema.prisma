@@ -1,0 +1,58 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============ Enums ============
+
+enum AmbulanceType {
+  BLS // Basic Life Support
+  ALS // Advanced Life Support
+  CCT // Critical Care Transport
+  RRV // Rapid Response Vehicle
+}
+
+enum AmbulanceStatus {
+  IDLE
+  EN_ROUTE
+  ON_SCENE
+  TRANSPORTING
+}
+
+// ============ Models ============
+
+model Hospital {
+  id           Int         @id @default(autoincrement())
+  name         String
+  lat          Float
+  lng          Float
+  capabilities String[] // e.g. ["PCI", "TRAUMA", "STROKE"]
+  ambulances   Ambulance[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Ambulance {
+  id         Int             @id @default(autoincrement())
+  callsign   String          @unique // e.g. "SJMC-ALS-01"
+  type       AmbulanceType
+  status     AmbulanceStatus @default(IDLE)
+  currentLat Float
+  currentLng Float
+  hospitalId Int
+  hospital   Hospital        @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
