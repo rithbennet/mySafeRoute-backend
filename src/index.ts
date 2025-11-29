@@ -33,6 +33,10 @@ async function buildApp() {
   });
 
   // Register Swagger
+  // Determine Swagger/OpenAPI server URL from environment (fallback to localhost)
+  const swaggerServerUrl =
+    process.env.SWAGGER_SERVER_URL || `http://localhost:${process.env.PORT || 3000}`;
+
   await fastify.register(swagger, {
     openapi: {
       info: {
@@ -62,8 +66,10 @@ Connect to \`ws://localhost:3000/ws/telemetry\` for real-time updates.
       },
       servers: [
         {
-          url: "http://localhost:3000",
-          description: "Local development server",
+          url: swaggerServerUrl,
+          description: swaggerServerUrl.includes("localhost")
+            ? "Local development server"
+            : "Configured server",
         },
       ],
       tags: [
