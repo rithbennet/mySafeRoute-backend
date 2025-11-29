@@ -9,6 +9,7 @@ import { ambulanceRoutes } from "./modules/ambulances";
 import { incidentRoutes } from "./modules/incidents";
 import { hazardRoutes } from "./modules/hazards";
 import { telemetryRoutes } from "./modules/telemetry";
+import { routingRoutes } from "./modules/routing";
 
 // Import seed data
 import { seedAll } from "./shared/seed";
@@ -71,6 +72,7 @@ async function buildApp() {
   await fastify.register(incidentRoutes);
   await fastify.register(hazardRoutes);
   await fastify.register(telemetryRoutes);
+  await fastify.register(routingRoutes);
 
   return fastify;
 }
