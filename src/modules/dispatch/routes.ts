@@ -68,33 +68,28 @@ All updates are broadcast via WebSocket at \`/ws/dispatch\`.
             incidentId: {
               type: "string",
               description: "Unique incident identifier",
-              example: "INC-001",
             },
             lat: {
               type: "number",
               minimum: -90,
               maximum: 90,
               description: "Incident latitude",
-              example: 3.0733,
             },
             lng: {
               type: "number",
               minimum: -180,
               maximum: 180,
               description: "Incident longitude",
-              example: 101.6067,
             },
             requiredType: {
               type: "string",
               enum: ["RRV", "BLS", "ALS", "CCT"],
               description: "Minimum required ambulance type",
-              example: "ALS",
             },
             severity: {
               type: "string",
               enum: ["HIGH", "LOW"],
               description: "Incident severity level",
-              default: "LOW",
             },
             triageType: {
               type: "string",
@@ -107,7 +102,6 @@ All updates are broadcast via WebSocket at \`/ws/dispatch\`.
                 "General",
               ],
               description: "Medical triage classification",
-              example: "Trauma",
             },
           },
         },
@@ -116,22 +110,22 @@ All updates are broadcast via WebSocket at \`/ws/dispatch\`.
             description: "Dispatch successful",
             type: "object",
             properties: {
-              success: { type: "boolean", example: true },
+              success: { type: "boolean" },
               data: {
                 type: "object",
                 properties: {
-                  ambulanceId: { type: "integer", example: 1 },
-                  ambulanceCallsign: { type: "string", example: "SJM6-ALS-01" },
+                  ambulanceId: { type: "integer" },
+                  ambulanceCallsign: { type: "string" },
                   ambulanceType: {
                     type: "string",
                     enum: ["RRV", "BLS", "ALS", "CCT"],
                   },
-                  etaSeconds: { type: "integer", example: 180 },
-                  distanceMeters: { type: "integer", example: 2500 },
+                  etaSeconds: { type: "integer" },
+                  distanceMeters: { type: "integer" },
                   route: {
                     type: "object",
                     properties: {
-                      type: { type: "string", example: "LineString" },
+                      type: { type: "string" },
                       coordinates: {
                         type: "array",
                         items: {
@@ -150,7 +144,7 @@ All updates are broadcast via WebSocket at \`/ws/dispatch\`.
             description: "Invalid request",
             type: "object",
             properties: {
-              success: { type: "boolean", example: false },
+              success: { type: "boolean" },
               error: { type: "string" },
               details: { type: "object" },
             },
@@ -159,7 +153,7 @@ All updates are broadcast via WebSocket at \`/ws/dispatch\`.
             description: "No ambulances available",
             type: "object",
             properties: {
-              success: { type: "boolean", example: false },
+              success: { type: "boolean" },
               error: { type: "string" },
             },
           },

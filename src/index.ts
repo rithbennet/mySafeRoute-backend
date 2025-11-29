@@ -12,6 +12,7 @@ import { incidentRoutes } from "./modules/incidents";
 import { hazardRoutes } from "./modules/hazards";
 import { telemetryRoutes } from "./modules/telemetry";
 import { dispatchRoutes } from "./modules/dispatch";
+import { routingRoutes } from "./modules/routing";
 
 // Import Prisma client for connection check
 import { prisma } from "./shared/store/prisma";
@@ -85,6 +86,10 @@ Currently, no authentication is required for MVP. Admin endpoints may require a 
         { name: "Incidents", description: "Emergency incident management" },
         { name: "Hazards", description: "Road hazard management" },
         { name: "Dispatch", description: "Auto-dispatch and simulation" },
+        {
+          name: "Routing",
+          description: "Route calculation with Google Routes API",
+        },
         { name: "System", description: "System health and info" },
       ],
       components: {
@@ -340,6 +345,7 @@ Currently, no authentication is required for MVP. Admin endpoints may require a 
   await fastify.register(hazardRoutes);
   await fastify.register(telemetryRoutes);
   await fastify.register(dispatchRoutes);
+  await fastify.register(routingRoutes);
 
   return fastify;
 }

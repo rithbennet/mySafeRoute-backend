@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MySafeRoute - Traffic & Hazard Aware Routing</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    }
+    
+    #map {
+      height: 100vh;
+      width: 100%;
+    }
+    
+    .control-panel {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      z-index: 1000;
+      max-width: 350px;
+    }
+    
+    .control-panel h2 {
+      margin-bottom: 15px;
+      color: #333;
+      font-size: 18px;
+    }
+    
+    .form-group {
+      margin-bottom: 12px;
+    }
+    
+    .form-group label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: 500;
+      color: #555;
+      font-size: 13px;
+    }
+    
+    .form-group input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    
+    .form-row {
+      display: flex;
+      gap: 10px;
+    }
+    
+    .form-row .form-group {
+      flex: 1;
+    }
+    
+    .btn {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      margin-bottom: 8px;
+      transition: background 0.2s;
+    }
+    
+    .btn-primary {
+      background: #4285f4;
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background: #3367d6;
+    }
+    
+    .btn-secondary {
+      background: #f1f3f4;
+      color: #333;
+    }
+    
+    .btn-secondary:hover {
+      background: #e8eaed;
+    }
+    
+    .btn-danger {
+      background: #ea4335;
+      color: white;
+    }
+    
+    .btn-danger:hover {
+      background: #d33426;
+    }
+    
+    .toggle-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    
+    .toggle-group label {
+      font-size: 13px;
+      color: #555;
+    }
+    
+    .route-info {
+      background: #f8f9fa;
+      padding: 12px;
+      border-radius: 4px;
+      margin-top: 12px;
+      display: none;
+    }
+    
+    .route-info.visible {
+      display: block;
+    }
+    
+    .route-info h3 {
+      font-size: 14px;
+      margin-bottom: 8px;
+      color: #333;
+    }
+    
+    .route-info p {
+      font-size: 13px;
+      color: #666;
+      margin-bottom: 4px;
+    }
+    
+    .route-info .eta {
+      font-size: 24px;
+      font-weight: bold;
+      color: #4285f4;
+    }
+    
+    .route-info .distance {
+      font-size: 16px;
+      color: #5f6368;
+    }
+    
+    .hazard-warning {
+      background: #fff3cd;
+      border: 1px solid #ffc107;
+      padding: 8px;
+      border-radius: 4px;
+      margin-top: 8px;
+      font-size: 12px;
+      color: #856404;
+    }
+    
+    .legend {
+      margin-top: 15px;
+      padding-top: 15px;
+      border-top: 1px solid #eee;
+    }
+    
+    .legend h4 {
+      font-size: 13px;
+      margin-bottom: 8px;
+      color: #333;
+    }
+    
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 4px;
+      font-size: 12px;
+      color: #666;
+    }
+    
+    .legend-color {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+    }
+    
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #666;
+    }
+    
+    .instructions {
+      font-size: 12px;
+      color: #888;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #eee;
+    }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  
+  <div class="control-panel">
+    <h2>🚑 MySafeRoute</h2>
+    
+    <div class="form-group">
+      <label>Origin</label>
+      <div class="form-row">
+        <div class="form-group">
+          <input type="number" id="originLat" placeholder="Latitude" value="3.1390" step="0.0001">
+        </div>
+        <div class="form-group">
+          <input type="number" id="originLng" placeholder="Longitude" value="101.6869" step="0.0001">
+        </div>
+      </div>
+    </div>
+    
+    <div class="form-group">
+      <label>Destination</label>
+      <div class="form-row">
+        <div class="form-group">
+          <input type="number" id="destLat" placeholder="Latitude" value="3.1714" step="0.0001">
+        </div>
+        <div class="form-group">
+          <input type="number" id="destLng" placeholder="Longitude" value="101.7006" step="0.0001">
+        </div>
+      </div>
+    </div>
+    
+    <div class="toggle-group">
+      <input type="checkbox" id="showTraffic" checked>
+      <label for="showTraffic">Show Traffic Layer</label>
+    </div>
+    
+    <div class="toggle-group">
+      <input type="checkbox" id="showHazards" checked>
+      <label for="showHazards">Show Hazards</label>
+    </div>
+    
+    <div class="toggle-group">
+      <input type="checkbox" id="avoidHazards" checked>
+      <label for="avoidHazards">Avoid Hazards in Route</label>
+    </div>
+    
+    <button class="btn btn-primary" onclick="calculateRoute()">
+      🗺️ Calculate Route
+    </button>
+    
+    <button class="btn btn-secondary" onclick="refreshHazards()">
+      🔄 Refresh Hazards
+    </button>
+    
+    <button class="btn btn-danger" onclick="clearRoute()">
+      ✕ Clear Route
+    </button>
+    
+    <div id="routeInfo" class="route-info">
+      <h3>Route Information</h3>
+      <p class="eta" id="routeEta">--</p>
+      <p class="distance" id="routeDistance">--</p>
+      <div id="hazardWarning" class="hazard-warning" style="display: none;"></div>
+    </div>
+    
+    <div class="legend">
+      <h4>Legend</h4>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #FF4444;"></div>
+        <span>Accident</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #1E90FF;"></div>
+        <span>Flood</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #FF8C00;"></div>
+        <span>Roadblock</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-color" style="background: #FFD700;"></div>
+        <span>Construction</span>
+      </div>
+    </div>
+    
+    <div class="instructions">
+      <strong>Tip:</strong> Click on the map to set origin (first click) and destination (second click).
+    </div>
+  </div>
+
+  <script>
+    // Configuration
+    const API_BASE = 'http://localhost:3000';
+    
+    let map;
+    let trafficLayer;
+    let directionsService;
+    let directionsRenderer;
+    let routePolyline;
+    let markers = [];
+    let hazardRectangles = [];
+    let hazardMarkers = [];
+    let clickCount = 0;
+    
+    // Initialize the map
+    async function initMap() {
+      // Get API key from backend
+      const apiKeyResponse = await fetch(`${API_BASE}/routes/api-key`);
+      const apiKeyData = await apiKeyResponse.json();
+      
+      // KL City Center
+      const center = { lat: 3.1390, lng: 101.6869 };
+      
+      map = new google.maps.Map(document.getElementById('map'), {
+        zoom: 13,
+        center: center,
+        mapTypeControl: true,
+        streetViewControl: false,
+        fullscreenControl: true,
+      });
+      
+      // Initialize traffic layer
+      trafficLayer = new google.maps.TrafficLayer();
+      if (document.getElementById('showTraffic').checked) {
+        trafficLayer.setMap(map);
+      }
+      
+      // Initialize directions service and renderer
+      directionsService = new google.maps.DirectionsService();
+      directionsRenderer = new google.maps.DirectionsRenderer({
+        map: map,
+        suppressMarkers: true,
+        polylineOptions: {
+          strokeColor: '#4285f4',
+          strokeWeight: 5,
+          strokeOpacity: 0.8,
+        },
+      });
+      
+      // Add click listener for setting origin/destination
+      map.addListener('click', (event) => {
+        const lat = event.latLng.lat().toFixed(4);
+        const lng = event.latLng.lng().toFixed(4);
+        
+        if (clickCount % 2 === 0) {
+          document.getElementById('originLat').value = lat;
+          document.getElementById('originLng').value = lng;
+        } else {
+          document.getElementById('destLat').value = lat;
+          document.getElementById('destLng').value = lng;
+        }
+        clickCount++;
+      });
+      
+      // Toggle traffic layer
+      document.getElementById('showTraffic').addEventListener('change', (e) => {
+        if (e.target.checked) {
+          trafficLayer.setMap(map);
+        } else {
+          trafficLayer.setMap(null);
+        }
+      });
+      
+      // Toggle hazards
+      document.getElementById('showHazards').addEventListener('change', (e) => {
+        const visibility = e.target.checked;
+        hazardRectangles.forEach(rect => rect.setVisible(visibility));
+        hazardMarkers.forEach(marker => marker.setVisible(visibility));
+      });
+      
+      // Load hazards
+      await refreshHazards();
+    }
+    
+    // Calculate route using backend API
+    async function calculateRoute() {
+      const origin = {
+        lat: parseFloat(document.getElementById('originLat').value),
+        lng: parseFloat(document.getElementById('originLng').value),
+      };
+      
+      const destination = {
+        lat: parseFloat(document.getElementById('destLat').value),
+        lng: parseFloat(document.getElementById('destLng').value),
+      };
+      
+      const avoidHazards = document.getElementById('avoidHazards').checked;
+      
+      try {
+        // Clear previous route
+        clearRoute();
+        
+        // Add markers
+        addMarker(origin, 'A', '#4285f4', 'Origin');
+        addMarker(destination, 'B', '#ea4335', 'Destination');
+        
+        // Call backend API
+        const response = await fetch(`${API_BASE}/routes/calculate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ origin, destination, avoidHazards }),
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          // Draw route on map
+          drawRoute(data.data.route.geometry);
+          
+          // Update route info panel
+          document.getElementById('routeInfo').classList.add('visible');
+          document.getElementById('routeEta').textContent = data.data.route.etaFormatted;
+          document.getElementById('routeDistance').textContent = `${data.data.route.distanceKm} km`;
+          
+          // Show hazard warning if applicable
+          const hazardWarning = document.getElementById('hazardWarning');
+          if (data.data.hazards && data.data.hazards.intersectsHazard) {
+            const hazardNames = data.data.hazards.hazards.map(h => h.type).join(', ');
+            const penalty = Math.round(data.data.hazards.penaltySeconds / 60);
+            hazardWarning.innerHTML = `⚠️ Route intersects with: <strong>${hazardNames}</strong><br>Added ${penalty} min delay penalty`;
+            hazardWarning.style.display = 'block';
+          } else {
+            hazardWarning.style.display = 'none';
+          }
+          
+          // Fit map to show route
+          const bounds = new google.maps.LatLngBounds();
+          bounds.extend(origin);
+          bounds.extend(destination);
+          map.fitBounds(bounds, { padding: 100 });
+        } else {
+          alert('Failed to calculate route: ' + data.error);
+        }
+      } catch (error) {
+        console.error('Error calculating route:', error);
+        alert('Error calculating route. Check console for details.');
+      }
+    }
+    
+    // Draw route polyline on map
+    function drawRoute(geometry) {
+      if (!geometry || !geometry.coordinates) return;
+      
+      const path = geometry.coordinates.map(coord => ({
+        lat: coord[1],
+        lng: coord[0],
+      }));
+      
+      routePolyline = new google.maps.Polyline({
+        path: path,
+        geodesic: true,
+        strokeColor: '#4285f4',
+        strokeOpacity: 0.9,
+        strokeWeight: 5,
+        map: map,
+      });
+    }
+    
+    // Add marker to map
+    function addMarker(position, label, color, title) {
+      const marker = new google.maps.Marker({
+        position: position,
+        map: map,
+        label: {
+          text: label,
+          color: 'white',
+          fontWeight: 'bold',
+        },
+        title: title,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 12,
+          fillColor: color,
+          fillOpacity: 1,
+          strokeColor: 'white',
+          strokeWeight: 2,
+        },
+      });
+      markers.push(marker);
+    }
+    
+    // Clear route and markers
+    function clearRoute() {
+      // Clear polyline
+      if (routePolyline) {
+        routePolyline.setMap(null);
+        routePolyline = null;
+      }
+      
+      // Clear markers
+      markers.forEach(marker => marker.setMap(null));
+      markers = [];
+      
+      // Hide route info
+      document.getElementById('routeInfo').classList.remove('visible');
+      
+      // Clear directions renderer
+      directionsRenderer.setDirections({ routes: [] });
+    }
+    
+    // Refresh hazards from backend
+    async function refreshHazards() {
+      try {
+        // Clear existing hazards
+        hazardRectangles.forEach(rect => rect.setMap(null));
+        hazardMarkers.forEach(marker => marker.setMap(null));
+        hazardRectangles = [];
+        hazardMarkers = [];
+        
+        const response = await fetch(`${API_BASE}/routes/traffic`);
+        const data = await response.json();
+        
+        if (data.success && data.data.hazards) {
+          const showHazards = document.getElementById('showHazards').checked;
+          
+          data.data.hazards.forEach(hazard => {
+            // Draw rectangle for hazard area
+            const rectangle = new google.maps.Rectangle({
+              bounds: hazard.rectangle,
+              strokeColor: hazard.color,
+              strokeOpacity: 0.8,
+              strokeWeight: 2,
+              fillColor: hazard.color,
+              fillOpacity: 0.35,
+              map: showHazards ? map : null,
+            });
+            hazardRectangles.push(rectangle);
+            
+            // Add info window
+            const infoWindow = new google.maps.InfoWindow({
+              content: `
+                <div style="padding: 5px;">
+                  <strong>${hazard.type}</strong><br>
+                  ${hazard.description}<br>
+                  <small>Severity: ${hazard.severity}</small>
+                </div>
+              `,
+            });
+            
+            // Add marker at center
+            const marker = new google.maps.Marker({
+              position: hazard.center,
+              map: showHazards ? map : null,
+              icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                scale: 8,
+                fillColor: hazard.color,
+                fillOpacity: 1,
+                strokeColor: 'white',
+                strokeWeight: 2,
+              },
+              title: `${hazard.type}: ${hazard.description}`,
+            });
+            
+            marker.addListener('click', () => {
+              infoWindow.open(map, marker);
+            });
+            
+            hazardMarkers.push(marker);
+          });
+          
+          console.log(`Loaded ${data.data.hazards.length} hazards`);
+        }
+      } catch (error) {
+        console.error('Error loading hazards:', error);
+      }
+    }
+    
+    // Load Google Maps API dynamically
+    async function loadGoogleMapsAPI() {
+      try {
+        const response = await fetch(`${API_BASE}/routes/api-key`);
+        const data = await response.json();
+        
+        if (data.success && data.apiKey) {
+          const script = document.createElement('script');
+          script.src = `https://maps.googleapis.com/maps/api/js?key=${data.apiKey}&callback=initMap&libraries=places`;
+          script.async = true;
+          script.defer = true;
+          document.head.appendChild(script);
+        } else {
+          document.getElementById('map').innerHTML = '<div class="loading">Error: Could not load API key</div>';
+        }
+      } catch (error) {
+        console.error('Error loading API key:', error);
+        document.getElementById('map').innerHTML = '<div class="loading">Error: Backend not available. Make sure server is running on port 3000.</div>';
+      }
+    }
+    
+    // Start loading
+    loadGoogleMapsAPI();
+  </script>
+</body>
+</html>
