@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "bun run --watch src/index.ts",
     "start": "bun run src/index.ts",
+    "build": "bunx prisma generate",
     "typecheck": "tsc --noEmit",
     "db:generate": "bunx prisma generate",
     "db:push": "bunx prisma db push",
