@@ -1,6 +1,12 @@
 import "dotenv/config";
 import pg from "pg";
-import { PrismaClient, IncidentCategory, IncidentSeverity, TriageType, IncidentStatus } from "../generated/prisma/client";
+import {
+  PrismaClient,
+  IncidentCategory,
+  IncidentSeverity,
+  TriageType,
+  IncidentStatus,
+} from "../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
@@ -95,8 +101,8 @@ const MOCK_INCIDENTS = [
     dispatcherNotes: "Parent on scene",
   },
   {
-    lat: 3.0670,
-    lng: 101.5950,
+    lat: 3.067,
+    lng: 101.595,
     category: IncidentCategory.ACCIDENT,
     severity: IncidentSeverity.HIGH,
     triageType: TriageType.Trauma,
@@ -119,13 +125,17 @@ async function seedIncidents(): Promise<void> {
     const hospitals = await prisma.hospital.findMany();
     const users = await prisma.user.findMany();
 
-    console.log(`ℹ️  Found ${hospitals.length} hospitals, ${users.length} users to optionally link`);
+    console.log(
+      `ℹ️  Found ${hospitals.length} hospitals, ${users.length} users to optionally link`
+    );
 
     let createdCount = 0;
 
     for (const [i, src] of MOCK_INCIDENTS.entries()) {
       // pick a hospital/user deterministically if available
-      const hospital = hospitals.length ? hospitals[i % hospitals.length] : null;
+      const hospital = hospitals.length
+        ? hospitals[i % hospitals.length]
+        : null;
       const user = users.length ? users[i % users.length] : null;
 
       const data: any = {
@@ -144,7 +154,11 @@ async function seedIncidents(): Promise<void> {
 
       const created = await prisma.incident.create({ data });
 
-      console.log(`   ✅ Created incident ${created.id} - ${String(created.category)} @ ${created.lat.toFixed(5)},${created.lng.toFixed(5)}`);
+      console.log(
+        `   ✅ Created incident ${created.id} - ${String(
+          created.category
+        )} @ ${created.lat.toFixed(5)},${created.lng.toFixed(5)}`
+      );
       createdCount++;
     }
 
