@@ -11,6 +11,7 @@ import { ambulanceRoutes } from "./modules/ambulances";
 import { incidentRoutes } from "./modules/incidents";
 import { hazardRoutes } from "./modules/hazards";
 import { telemetryRoutes } from "./modules/telemetry";
+import { dispatchRoutes } from "./modules/dispatch";
 import { routingRoutes } from "./modules/routing";
 
 // Import Prisma client for connection check
@@ -36,7 +37,8 @@ async function buildApp() {
   // Register Swagger
   // Determine Swagger/OpenAPI server URL from environment (fallback to localhost)
   const swaggerServerUrl =
-    process.env.SWAGGER_SERVER_URL || `http://localhost:${process.env.PORT || 3000}`;
+    process.env.SWAGGER_SERVER_URL ||
+    `http://localhost:${process.env.PORT || 3000}`;
 
   await fastify.register(swagger, {
     openapi: {
@@ -52,13 +54,15 @@ This API provides endpoints for managing emergency dispatch operations in the Kl
 - **Ambulances**: Track ambulance locations and status in real-time
 - **Incidents**: Create and manage emergency incidents
 - **Hazards**: Mark road hazards and closures for route optimization
-- **Real-time Updates**: WebSocket endpoint for live telemetry
+- **Auto-Dispatch**: Intelligent ambulance assignment with ETA calculation
+- **Live Simulation**: Real-time lifecycle simulation with WebSocket updates
 
 ### Authentication
 Currently, no authentication is required for MVP. Admin endpoints may require a token in the future.
 
-### WebSocket
-Connect to \`ws://localhost:3000/ws/telemetry\` for real-time updates.
+### WebSocket Endpoints
+- \`ws://localhost:3000/ws/telemetry\` - General telemetry updates
+- \`ws://localhost:3000/ws/dispatch\` - Dispatch dashboard updates (AMBULANCE_UPDATE, HOSPITAL_SELECTED, SIMULATION_COMPLETE)
         `,
         version: "1.0.0",
         contact: {
@@ -81,6 +85,11 @@ Connect to \`ws://localhost:3000/ws/telemetry\` for real-time updates.
         },
         { name: "Incidents", description: "Emergency incident management" },
         { name: "Hazards", description: "Road hazard management" },
+        { name: "Dispatch", description: "Auto-dispatch and simulation" },
+        {
+          name: "Routing",
+          description: "Route calculation with Google Routes API",
+        },
         { name: "System", description: "System health and info" },
       ],
       components: {
@@ -335,6 +344,7 @@ Connect to \`ws://localhost:3000/ws/telemetry\` for real-time updates.
   await fastify.register(incidentRoutes);
   await fastify.register(hazardRoutes);
   await fastify.register(telemetryRoutes);
+  await fastify.register(dispatchRoutes);
   await fastify.register(routingRoutes);
 
   return fastify;

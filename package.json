@@ -11,7 +11,8 @@
     "db:generate": "bunx prisma generate",
     "db:push": "bunx prisma db push",
     "db:seed": "bun prisma/seed.ts",
-    "db:reset": "bunx prisma db push --force-reset && bun prisma/seed.ts"
+    "db:seed-users": "bun prisma/seed-users.ts",
+    "db:reset": "bunx prisma db push --force-reset && bun prisma/seed.ts && bun prisma/seed-users.ts"
   },
   "prisma": {
     "seed": "bun prisma/seed.ts"
