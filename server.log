@@ -1,0 +1,74 @@
+$ bun run src/index.ts
+🔌 Connecting to database...
+✅ Database connected - 18 hospitals, 50 ambulances
+
+🚑 MySafeRoute Backend Server Started!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📍 HTTP:      http://localhost:3000
+📚 Swagger:   http://localhost:3000/docs
+📡 WebSocket: ws://localhost:3000/ws/telemetry
+🗄️  Database:  PostgreSQL (Neon)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
+[11:32:53 UTC] INFO: Server listening at http://127.0.0.1:3000
+[11:32:53 UTC] INFO: Server listening at http://192.168.0.129:3000
+[11:32:56 UTC] INFO: incoming request
+    reqId: "req-1"
+    req: {
+      "method": "POST",
+      "url": "/routes/optimal",
+      "host": "localhost:3000",
+      "remoteAddress": "127.0.0.1",
+      "remotePort": 64078
+    }
+[11:33:00 UTC] INFO: request completed
+    reqId: "req-1"
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 3253.215332999999
+[11:33:05 UTC] INFO: incoming request
+    reqId: "req-2"
+    req: {
+      "method": "POST",
+      "url": "/routes/optimal",
+      "host": "localhost:3000",
+      "remoteAddress": "127.0.0.1",
+      "remotePort": 64139
+    }
+[11:33:06 UTC] INFO: request completed
+    reqId: "req-2"
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 1150.7050839999993
+[11:33:08 UTC] INFO: incoming request
+    reqId: "req-3"
+    req: {
+      "method": "POST",
+      "url": "/routes/optimal",
+      "host": "localhost:3000",
+      "remoteAddress": "127.0.0.1",
+      "remotePort": 64162
+    }
+[11:33:09 UTC] INFO: request completed
+    reqId: "req-3"
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 972.3940000000002
+[11:34:52 UTC] INFO: incoming request
+    reqId: "req-4"
+    req: {
+      "method": "POST",
+      "url": "/routes/optimal",
+      "host": "localhost:3000",
+      "remoteAddress": "127.0.0.1",
+      "remotePort": 65364
+    }
+[11:34:53 UTC] INFO: request completed
+    reqId: "req-4"
+    res: {
+      "statusCode": 200
+    }
+    responseTime: 1133.9122919999936

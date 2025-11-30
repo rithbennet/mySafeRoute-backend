@@ -5,3 +5,4 @@ export {
   HospitalScoringService,
 } from "./HospitalScoringService";
 export { routingRoutes } from "./routes";
+export { getTrafficService, TrafficService } from "./TrafficService";
