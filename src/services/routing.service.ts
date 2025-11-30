@@ -155,6 +155,99 @@ class RoutingService {
       lng: start.lng + (end.lng - start.lng) * clampedProgress,
     };
   }
+
+  /**
+   * Get position along a polyline at a given progress (0-1)
+   * Walks along the actual route coordinates for realistic movement
+   *
+   * @param coordinates - Array of [lng, lat] pairs (GeoJSON format)
+   * @param progress - Progress from 0 to 1
+   * @returns Coordinates at the given progress point
+   */
+  getPositionAlongPolyline(
+    coordinates: [number, number][],
+    progress: number
+  ): Coordinates {
+    const clampedProgress = Math.max(0, Math.min(1, progress));
+
+    if (coordinates.length === 0) {
+      throw new Error("Cannot interpolate along empty polyline");
+    }
+
+    const firstCoord = coordinates[0]!;
+    const lastCoord = coordinates[coordinates.length - 1]!;
+
+    if (coordinates.length === 1) {
+      return { lng: firstCoord[0], lat: firstCoord[1] };
+    }
+
+    // Calculate cumulative distances for each segment
+    const segmentDistances: number[] = [];
+    let totalDistance = 0;
+
+    for (let i = 1; i < coordinates.length; i++) {
+      const prev = coordinates[i - 1]!;
+      const curr = coordinates[i]!;
+      const distance = haversineDistance(prev[1], prev[0], curr[1], curr[0]);
+      segmentDistances.push(distance);
+      totalDistance += distance;
+    }
+
+    // Handle edge cases
+    if (totalDistance === 0 || clampedProgress === 0) {
+      return { lng: firstCoord[0], lat: firstCoord[1] };
+    }
+
+    if (clampedProgress >= 1) {
+      return { lng: lastCoord[0], lat: lastCoord[1] };
+    }
+
+    // Find the target distance along the route
+    const targetDistance = totalDistance * clampedProgress;
+
+    // Walk along segments to find which segment contains our target
+    let accumulatedDistance = 0;
+
+    for (let i = 0; i < segmentDistances.length; i++) {
+      const segmentLength = segmentDistances[i]!;
+
+      if (accumulatedDistance + segmentLength >= targetDistance) {
+        // Target is within this segment
+        const distanceIntoSegment = targetDistance - accumulatedDistance;
+        const segmentProgress =
+          segmentLength > 0 ? distanceIntoSegment / segmentLength : 0;
+
+        const start = coordinates[i]!;
+        const end = coordinates[i + 1]!;
+
+        // Linear interpolation within this segment
+        return {
+          lat: start[1] + (end[1] - start[1]) * segmentProgress,
+          lng: start[0] + (end[0] - start[0]) * segmentProgress,
+        };
+      }
+
+      accumulatedDistance += segmentLength;
+    }
+
+    // Fallback to last point (should not reach here)
+    return { lng: lastCoord[0], lat: lastCoord[1] };
+  }
+
+  /**
+   * Calculate total distance of a polyline in meters
+   */
+  calculatePolylineDistance(coordinates: [number, number][]): number {
+    let totalDistance = 0;
+
+    for (let i = 1; i < coordinates.length; i++) {
+      const prev = coordinates[i - 1]!;
+      const curr = coordinates[i]!;
+      totalDistance += haversineDistance(prev[1], prev[0], curr[1], curr[0]);
+    }
+
+    return totalDistance;
+  }
 }
 
 // Export singleton instance

@@ -128,6 +128,7 @@ async function seedUsers(): Promise<void> {
     const users = await prisma.user.findMany();
     for (let i = 0; i < users.length; i++) {
       const u = users[i];
+      if (!u) continue;
       const landmark = MOCK_USERS[i]?.landmark ?? "Unknown";
       console.log(
         `| ${String(u.id).padEnd(2)} | ${u.name.padEnd(19)} | ${landmark.padEnd(

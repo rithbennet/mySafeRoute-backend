@@ -1,27 +1,51 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
-import db from "../../shared/store/Database";
+import { z } from "zod";
 import {
-  CreateIncidentSchema,
-  AssignAmbulanceSchema,
-} from "../../shared/types";
-import type { Incident } from "../../shared/types";
-import { hospitalScoringService } from "../routing";
-import { generateId } from "../../shared/utils";
+  prisma,
+  AmbulanceStatus,
+  IncidentStatus,
+} from "../../shared/store/prisma";
+import {
+  dispatchService,
+  routingService,
+  simulationService,
+} from "../../services";
 import { broadcastToDispatchers } from "../telemetry/WebSocketService";
+import type { AmbulanceType } from "../../../generated/prisma/client";
 
-// Inline schemas for OpenAPI documentation
+// ============ Validation Schemas ============
+
+const AssignAmbulanceSchema = z.object({
+  ambulanceId: z.number().int().positive(),
+  dispatcherNotes: z.string().optional(),
+});
+
+const UpdateStatusSchema = z.object({
+  status: z.enum([
+    "PENDING",
+    "DISPATCHED",
+    "EN_ROUTE",
+    "ON_SCENE",
+    "TRANSPORTING",
+    "COMPLETED",
+    "CANCELLED",
+  ]),
+});
+
+// ============ OpenAPI Schemas ============
+
 const IncidentSchema = {
   type: "object",
   properties: {
     id: { type: "string" },
-    location: {
-      type: "object",
-      properties: {
-        lat: { type: "number" },
-        lng: { type: "number" },
-      },
+    lat: { type: "number" },
+    lng: { type: "number" },
+    category: {
+      type: "string",
+      enum: ["MEDICAL", "FIRE", "ACCIDENT", "OTHER"],
     },
-    triage: {
+    severity: { type: "string", enum: ["HIGH", "LOW"] },
+    triageType: {
       type: "string",
       enum: ["STEMI", "Stroke", "Trauma", "Burns", "Pediatric", "General"],
     },
@@ -29,55 +53,36 @@ const IncidentSchema = {
       type: "string",
       enum: [
         "PENDING",
-        "ASSIGNED",
+        "DISPATCHED",
         "EN_ROUTE",
-        "ARRIVED",
+        "ON_SCENE",
         "TRANSPORTING",
         "COMPLETED",
         "CANCELLED",
       ],
     },
-    assignedAmbulanceId: { type: "string", nullable: true },
-    recommendedHospitalId: { type: "string", nullable: true },
+    description: { type: "string", nullable: true },
+    dispatcherNotes: { type: "string", nullable: true },
+    assignedAmbulanceId: { type: "integer", nullable: true },
+    destinationHospitalId: { type: "integer", nullable: true },
     etaSeconds: { type: "integer", nullable: true },
     createdAt: { type: "string", format: "date-time" },
     updatedAt: { type: "string", format: "date-time" },
   },
 };
 
-const AmbulanceSchema = {
+const CandidateSchema = {
   type: "object",
   properties: {
-    id: { type: "string" },
+    id: { type: "integer" },
     callsign: { type: "string" },
-    type: { type: "string" },
-    status: { type: "string" },
-    location: {
-      type: "object",
-      properties: {
-        lat: { type: "number" },
-        lng: { type: "number" },
-      },
-    },
-  },
-};
-
-const HospitalSchema = {
-  type: "object",
-  properties: {
-    id: { type: "string" },
-    name: { type: "string" },
-    location: {
-      type: "object",
-      properties: {
-        lat: { type: "number" },
-        lng: { type: "number" },
-      },
-    },
-    capabilities: {
-      type: "array",
-      items: { type: "string" },
-    },
+    type: { type: "string", enum: ["RRV", "BLS", "ALS", "CCT"] },
+    lat: { type: "number" },
+    lng: { type: "number" },
+    hospitalId: { type: "integer" },
+    hospitalName: { type: "string" },
+    etaSeconds: { type: "integer" },
+    distanceMeters: { type: "integer" },
   },
 };
 
@@ -90,12 +95,12 @@ const ErrorResponseSchema = {
 };
 
 /**
- * Incident Routes
+ * Incident Routes (Prisma-based)
  */
 export async function incidentRoutes(fastify: FastifyInstance) {
   /**
    * GET /incidents
-   * Returns all incidents
+   * Returns all incidents with optional status filter
    */
   fastify.get(
     "/incidents",
@@ -104,24 +109,61 @@ export async function incidentRoutes(fastify: FastifyInstance) {
         tags: ["Incidents"],
         summary: "List all incidents",
         description:
-          "Returns all incidents including completed and cancelled ones",
+          "Returns all incidents. Use ?status=PENDING to filter by status.",
+        querystring: {
+          type: "object",
+          properties: {
+            status: {
+              type: "string",
+              enum: [
+                "PENDING",
+                "DISPATCHED",
+                "EN_ROUTE",
+                "ON_SCENE",
+                "TRANSPORTING",
+                "COMPLETED",
+                "CANCELLED",
+              ],
+              description: "Filter by incident status",
+            },
+          },
+        },
         response: {
           200: {
             type: "object",
             properties: {
               success: { type: "boolean" },
-              data: {
-                type: "array",
-                items: IncidentSchema,
-              },
+              data: { type: "array", items: IncidentSchema },
               count: { type: "integer" },
             },
           },
         },
       },
     },
-    async (_request: FastifyRequest, reply: FastifyReply) => {
-      const incidents = db.getIncidents();
+    async (
+      request: FastifyRequest<{ Querystring: { status?: string } }>,
+      reply: FastifyReply
+    ) => {
+      const { status } = request.query;
+
+      const where = status ? { status: status as IncidentStatus } : {};
+
+      const incidents = await prisma.incident.findMany({
+        where,
+        include: {
+          assignedAmbulance: {
+            select: { id: true, callsign: true, type: true },
+          },
+          destinationHospital: {
+            select: { id: true, name: true },
+          },
+          reportedBy: {
+            select: { id: true, name: true, phone: true },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
       return reply.send({
         success: true,
         data: incidents,
@@ -132,7 +174,7 @@ export async function incidentRoutes(fastify: FastifyInstance) {
 
   /**
    * GET /incidents/active
-   * Returns only active incidents
+   * Returns only active incidents (not completed or cancelled)
    */
   fastify.get(
     "/incidents/active",
@@ -147,10 +189,7 @@ export async function incidentRoutes(fastify: FastifyInstance) {
             type: "object",
             properties: {
               success: { type: "boolean" },
-              data: {
-                type: "array",
-                items: IncidentSchema,
-              },
+              data: { type: "array", items: IncidentSchema },
               count: { type: "integer" },
             },
           },
@@ -158,7 +197,26 @@ export async function incidentRoutes(fastify: FastifyInstance) {
       },
     },
     async (_request: FastifyRequest, reply: FastifyReply) => {
-      const incidents = db.getActiveIncidents();
+      const incidents = await prisma.incident.findMany({
+        where: {
+          status: {
+            notIn: [IncidentStatus.COMPLETED, IncidentStatus.CANCELLED],
+          },
+        },
+        include: {
+          assignedAmbulance: {
+            select: { id: true, callsign: true, type: true, status: true },
+          },
+          destinationHospital: {
+            select: { id: true, name: true },
+          },
+          reportedBy: {
+            select: { id: true, name: true },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
       return reply.send({
         success: true,
         data: incidents,
@@ -178,7 +236,67 @@ export async function incidentRoutes(fastify: FastifyInstance) {
         tags: ["Incidents"],
         summary: "Get incident by ID",
         description:
-          "Returns a specific incident with assigned ambulance and recommended hospital details",
+          "Returns a specific incident with assigned ambulance and hospital details",
+        params: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Incident ID (UUID)" },
+          },
+          required: ["id"],
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              success: { type: "boolean" },
+              data: IncidentSchema,
+            },
+          },
+          404: ErrorResponseSchema,
+        },
+      },
+    },
+    async (
+      request: FastifyRequest<{ Params: { id: string } }>,
+      reply: FastifyReply
+    ) => {
+      const { id } = request.params;
+
+      const incident = await prisma.incident.findUnique({
+        where: { id },
+        include: {
+          assignedAmbulance: true,
+          destinationHospital: true,
+          reportedBy: true,
+        },
+      });
+
+      if (!incident) {
+        return reply.status(404).send({
+          success: false,
+          error: "Incident not found",
+        });
+      }
+
+      return reply.send({
+        success: true,
+        data: incident,
+      });
+    }
+  );
+
+  /**
+   * GET /incidents/:id/candidates
+   * Returns ranked list of ambulance candidates for this incident
+   */
+  fastify.get(
+    "/incidents/:id/candidates",
+    {
+      schema: {
+        tags: ["Incidents"],
+        summary: "Get ambulance candidates for incident",
+        description:
+          "Returns a ranked list of available ambulances sorted by ETA to the incident location",
         params: {
           type: "object",
           properties: {
@@ -191,14 +309,8 @@ export async function incidentRoutes(fastify: FastifyInstance) {
             type: "object",
             properties: {
               success: { type: "boolean" },
-              data: {
-                type: "object",
-                properties: {
-                  incident: IncidentSchema,
-                  assignedAmbulance: AmbulanceSchema,
-                  recommendedHospital: HospitalSchema,
-                },
-              },
+              data: { type: "array", items: CandidateSchema },
+              count: { type: "integer" },
             },
           },
           404: ErrorResponseSchema,
@@ -210,7 +322,11 @@ export async function incidentRoutes(fastify: FastifyInstance) {
       reply: FastifyReply
     ) => {
       const { id } = request.params;
-      const incident = db.getIncident(id);
+
+      // Get incident
+      const incident = await prisma.incident.findUnique({
+        where: { id },
+      });
 
       if (!incident) {
         return reply.status(404).send({
@@ -219,187 +335,65 @@ export async function incidentRoutes(fastify: FastifyInstance) {
         });
       }
 
-      // Get related data
-      const ambulance = incident.assignedAmbulanceId
-        ? db.getAmbulance(incident.assignedAmbulanceId)
-        : null;
-      const hospital = incident.recommendedHospitalId
-        ? db.getHospital(incident.recommendedHospitalId)
-        : null;
+      // Get all IDLE ambulances with their hospitals
+      const idleAmbulances = await prisma.ambulance.findMany({
+        where: { status: AmbulanceStatus.IDLE },
+        include: { hospital: { select: { id: true, name: true } } },
+      });
+
+      // Calculate ETA for each ambulance
+      const candidates = idleAmbulances.map((ambulance) => {
+        const route = routingService.calculateMockRoute(
+          { lat: ambulance.currentLat, lng: ambulance.currentLng },
+          { lat: incident.lat, lng: incident.lng }
+        );
+
+        return {
+          id: ambulance.id,
+          callsign: ambulance.callsign,
+          type: ambulance.type,
+          lat: ambulance.currentLat,
+          lng: ambulance.currentLng,
+          hospitalId: ambulance.hospitalId,
+          hospitalName: ambulance.hospital.name,
+          etaSeconds: route.etaSeconds,
+          distanceMeters: route.distanceMeters,
+        };
+      });
+
+      // Sort by ETA (closest first)
+      candidates.sort((a, b) => a.etaSeconds - b.etaSeconds);
 
       return reply.send({
         success: true,
-        data: {
-          incident,
-          assignedAmbulance: ambulance,
-          recommendedHospital: hospital,
-        },
-      });
-    }
-  );
-
-  /**
-   * POST /incidents
-   * Create a new incident
-   * Flow:
-   * 1. Save incident to store
-   * 2. Call HospitalScoringService to find top hospitals
-   * 3. Return incident with recommendations
-   */
-  fastify.post(
-    "/incidents",
-    {
-      schema: {
-        tags: ["Incidents"],
-        summary: "Create new incident",
-        description: `
-Creates a new emergency incident and automatically recommends the best hospitals based on:
-- Triage type (STEMI, Stroke, Trauma, etc.)
-- Hospital capabilities
-- Distance and ETA
-- Current hospital load
-
-Returns top 3 hospital recommendations with routes.
-        `,
-        body: {
-          type: "object",
-          required: ["location", "triage"],
-          properties: {
-            location: {
-              type: "object",
-              required: ["lat", "lng"],
-              properties: {
-                lat: { type: "number" },
-                lng: { type: "number" },
-              },
-            },
-            triage: {
-              type: "string",
-              enum: [
-                "STEMI",
-                "Stroke",
-                "Trauma",
-                "Burns",
-                "Pediatric",
-                "General",
-              ],
-              description: "Emergency triage type",
-            },
-          },
-        },
-        response: {
-          201: {
-            type: "object",
-            properties: {
-              success: { type: "boolean" },
-              data: {
-                type: "object",
-                properties: {
-                  incident: IncidentSchema,
-                  recommendations: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        hospital: HospitalSchema,
-                        score: { type: "number" },
-                        etaSeconds: { type: "integer" },
-                        distanceMeters: { type: "integer" },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-          400: ErrorResponseSchema,
-        },
-      },
-    },
-    async (
-      request: FastifyRequest<{
-        Body: { location: { lat: number; lng: number }; triage: string };
-      }>,
-      reply: FastifyReply
-    ) => {
-      // Validate input
-      const parseResult = CreateIncidentSchema.safeParse(request.body);
-      if (!parseResult.success) {
-        return reply.status(400).send({
-          success: false,
-          error: "Invalid input",
-          details: parseResult.error.flatten(),
-        });
-      }
-
-      const { location, triage } = parseResult.data;
-
-      // Create incident
-      const incident: Incident = {
-        id: generateId(),
-        location,
-        triage,
-        status: "PENDING",
-        assignedAmbulanceId: null,
-        recommendedHospitalId: null,
-        route: null,
-        etaSeconds: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      // Get hospital recommendations
-      const topHospitals = await hospitalScoringService.rankHospitals(
-        location,
-        triage,
-        3
-      );
-
-      // Set best hospital as recommendation
-      const best = topHospitals[0];
-      if (best) {
-        incident.recommendedHospitalId = best.hospital.id;
-        incident.route = best.route;
-        incident.etaSeconds = best.etaSeconds;
-      }
-
-      // Save incident
-      db.setIncident(incident);
-
-      // Broadcast to dispatchers
-      broadcastToDispatchers({
-        type: "incident_update",
-        action: "created",
-        incident,
-      });
-
-      return reply.status(201).send({
-        success: true,
-        data: {
-          incident,
-          recommendations: topHospitals.map((h) => ({
-            hospital: h.hospital,
-            score: h.score,
-            etaSeconds: h.etaSeconds,
-            distanceMeters: h.distanceMeters,
-          })),
-        },
+        data: candidates,
+        count: candidates.length,
       });
     }
   );
 
   /**
    * POST /incidents/:id/assign
-   * Assign an ambulance to an incident
+   * Assign an ambulance to an incident and IMMEDIATELY start simulation
    */
   fastify.post(
     "/incidents/:id/assign",
     {
       schema: {
         tags: ["Incidents"],
-        summary: "Assign ambulance to incident",
-        description:
-          "Assigns an available ambulance to an incident and updates both statuses",
+        summary: "Assign ambulance and start simulation",
+        description: `
+Assigns an ambulance to an incident and **immediately** starts the movement simulation.
+
+**Flow:**
+1. Validates ambulance is IDLE
+2. Updates Incident status to DISPATCHED
+3. Updates Ambulance status to EN_ROUTE
+4. **Starts live simulation** - ambulance moves on map every 1 second
+5. Broadcasts INCIDENT_UPDATE and AMBULANCE_UPDATE via WebSocket
+
+The frontend will receive real-time position updates without any further API calls.
+        `,
         params: {
           type: "object",
           properties: {
@@ -412,8 +406,12 @@ Returns top 3 hospital recommendations with routes.
           required: ["ambulanceId"],
           properties: {
             ambulanceId: {
-              type: "string",
+              type: "integer",
               description: "ID of the ambulance to assign",
+            },
+            dispatcherNotes: {
+              type: "string",
+              description: "Optional notes from dispatcher",
             },
           },
         },
@@ -426,7 +424,17 @@ Returns top 3 hospital recommendations with routes.
                 type: "object",
                 properties: {
                   incident: IncidentSchema,
-                  ambulance: AmbulanceSchema,
+                  ambulance: {
+                    type: "object",
+                    properties: {
+                      id: { type: "integer" },
+                      callsign: { type: "string" },
+                      type: { type: "string" },
+                      status: { type: "string" },
+                    },
+                  },
+                  etaSeconds: { type: "integer" },
+                  simulationStarted: { type: "boolean" },
                 },
               },
               message: { type: "string" },
@@ -440,7 +448,7 @@ Returns top 3 hospital recommendations with routes.
     async (
       request: FastifyRequest<{
         Params: { id: string };
-        Body: { ambulanceId: string };
+        Body: { ambulanceId: number; dispatcherNotes?: string };
       }>,
       reply: FastifyReply
     ) => {
@@ -456,10 +464,13 @@ Returns top 3 hospital recommendations with routes.
         });
       }
 
-      const { ambulanceId } = parseResult.data;
+      const { ambulanceId, dispatcherNotes } = parseResult.data;
 
-      // Check incident exists
-      const incident = db.getIncident(id);
+      // Get incident
+      const incident = await prisma.incident.findUnique({
+        where: { id },
+      });
+
       if (!incident) {
         return reply.status(404).send({
           success: false,
@@ -467,8 +478,12 @@ Returns top 3 hospital recommendations with routes.
         });
       }
 
-      // Check ambulance exists and is available
-      const ambulance = db.getAmbulance(ambulanceId);
+      // Get ambulance
+      const ambulance = await prisma.ambulance.findUnique({
+        where: { id: ambulanceId },
+        include: { hospital: true },
+      });
+
       if (!ambulance) {
         return reply.status(404).send({
           success: false,
@@ -476,53 +491,92 @@ Returns top 3 hospital recommendations with routes.
         });
       }
 
-      if (ambulance.status !== "AVAILABLE") {
+      if (ambulance.status !== AmbulanceStatus.IDLE) {
         return reply.status(400).send({
           success: false,
-          error: "Ambulance is not available",
+          error: `Ambulance is not available (current status: ${ambulance.status})`,
         });
       }
 
+      // Calculate ETA
+      const route = routingService.calculateMockRoute(
+        { lat: ambulance.currentLat, lng: ambulance.currentLng },
+        { lat: incident.lat, lng: incident.lng }
+      );
+
       // Update incident
-      const updatedIncident = db.updateIncident(id, {
-        assignedAmbulanceId: ambulanceId,
-        status: "ASSIGNED",
+      const updatedIncident = await prisma.incident.update({
+        where: { id },
+        data: {
+          assignedAmbulanceId: ambulanceId,
+          status: IncidentStatus.DISPATCHED,
+          dispatcherNotes: dispatcherNotes || null,
+          etaSeconds: route.etaSeconds,
+          routeGeometry: route.geometry,
+        },
       });
 
-      // Update ambulance
-      db.updateAmbulance(ambulanceId, {
-        status: "BUSY",
+      // Update ambulance status
+      const updatedAmbulance = await prisma.ambulance.update({
+        where: { id: ambulanceId },
+        data: { status: AmbulanceStatus.EN_ROUTE },
       });
 
-      // Broadcast updates
+      // Broadcast INCIDENT_UPDATE
       broadcastToDispatchers({
-        type: "incident_update",
-        action: "assigned",
-        incident: updatedIncident,
-        ambulanceId,
-      });
-
-      broadcastToDispatchers({
-        type: "ambulance_update",
-        action: "assigned",
-        ambulanceId,
+        type: "INCIDENT_UPDATE",
         incidentId: id,
+        status: "DISPATCHED",
+        assignedAmbulanceId: ambulanceId,
+        etaSeconds: route.etaSeconds,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Start simulation IMMEDIATELY (non-blocking)
+      setImmediate(async () => {
+        try {
+          console.log(`\n🚀 Starting simulation for incident ${id}`);
+          await simulationService.startLifecycle({
+            ambulanceId,
+            incidentId: id,
+            ambulanceLocation: {
+              lat: ambulance.currentLat,
+              lng: ambulance.currentLng,
+            },
+            incidentLocation: {
+              lat: incident.lat,
+              lng: incident.lng,
+            },
+            severity: incident.severity as "HIGH" | "LOW",
+            ambulanceType: ambulance.type as AmbulanceType,
+            triageType: incident.triageType,
+          });
+        } catch (error) {
+          console.error(`❌ Simulation error for incident ${id}:`, error);
+        }
       });
 
       return reply.send({
         success: true,
         data: {
           incident: updatedIncident,
-          ambulance: db.getAmbulance(ambulanceId),
+          ambulance: {
+            id: updatedAmbulance.id,
+            callsign: updatedAmbulance.callsign,
+            type: updatedAmbulance.type,
+            status: updatedAmbulance.status,
+          },
+          etaSeconds: route.etaSeconds,
+          simulationStarted: true,
         },
-        message: "Ambulance assigned successfully",
+        message: `Ambulance ${ambulance.callsign} assigned and simulation started`,
       });
     }
   );
 
   /**
    * PATCH /incidents/:id/status
-   * Update incident status
+   * Update incident status manually
    */
   fastify.patch(
     "/incidents/:id/status",
@@ -531,7 +585,7 @@ Returns top 3 hospital recommendations with routes.
         tags: ["Incidents"],
         summary: "Update incident status",
         description:
-          "Update the status of an incident. If completed/cancelled, the assigned ambulance is freed.",
+          "Manually update incident status. If completed/cancelled, frees the ambulance.",
         params: {
           type: "object",
           properties: {
@@ -547,14 +601,13 @@ Returns top 3 hospital recommendations with routes.
               type: "string",
               enum: [
                 "PENDING",
-                "ASSIGNED",
+                "DISPATCHED",
                 "EN_ROUTE",
-                "ARRIVED",
+                "ON_SCENE",
                 "TRANSPORTING",
                 "COMPLETED",
                 "CANCELLED",
               ],
-              description: "New incident status",
             },
           },
         },
@@ -578,9 +631,22 @@ Returns top 3 hospital recommendations with routes.
       reply: FastifyReply
     ) => {
       const { id } = request.params;
-      const { status } = request.body;
 
-      const incident = db.getIncident(id);
+      const parseResult = UpdateStatusSchema.safeParse(request.body);
+      if (!parseResult.success) {
+        return reply.status(400).send({
+          success: false,
+          error: "Invalid status",
+          details: parseResult.error.flatten(),
+        });
+      }
+
+      const { status } = parseResult.data;
+
+      const incident = await prisma.incident.findUnique({
+        where: { id },
+      });
+
       if (!incident) {
         return reply.status(404).send({
           success: false,
@@ -588,29 +654,114 @@ Returns top 3 hospital recommendations with routes.
         });
       }
 
-      const updatedIncident = db.updateIncident(id, { status: status as any });
+      // Update incident
+      const updatedIncident = await prisma.incident.update({
+        where: { id },
+        data: { status: status as IncidentStatus },
+      });
 
-      // If completed or cancelled, free up the ambulance
+      // If completed or cancelled, free the ambulance
       if (
         ["COMPLETED", "CANCELLED"].includes(status) &&
         incident.assignedAmbulanceId
       ) {
-        db.updateAmbulance(incident.assignedAmbulanceId, {
-          status: "AVAILABLE",
+        await prisma.ambulance.update({
+          where: { id: incident.assignedAmbulanceId },
+          data: { status: AmbulanceStatus.IDLE },
         });
+
+        // Cancel any running simulation
+        await simulationService.cancelSimulation(id);
       }
 
-      // Broadcast update
+      // Broadcast status change
       broadcastToDispatchers({
-        type: "incident_update",
-        action: "status_changed",
-        incident: updatedIncident,
-        newStatus: status,
+        type: "INCIDENT_UPDATE",
+        incidentId: id,
+        status,
+        timestamp: new Date().toISOString(),
       });
 
       return reply.send({
         success: true,
         data: updatedIncident,
+      });
+    }
+  );
+
+  /**
+   * DELETE /incidents/:id
+   * Cancel and delete an incident
+   */
+  fastify.delete(
+    "/incidents/:id",
+    {
+      schema: {
+        tags: ["Incidents"],
+        summary: "Delete incident",
+        description: "Cancels simulation and deletes the incident",
+        params: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Incident ID" },
+          },
+          required: ["id"],
+        },
+        response: {
+          200: {
+            type: "object",
+            properties: {
+              success: { type: "boolean" },
+              message: { type: "string" },
+            },
+          },
+          404: ErrorResponseSchema,
+        },
+      },
+    },
+    async (
+      request: FastifyRequest<{ Params: { id: string } }>,
+      reply: FastifyReply
+    ) => {
+      const { id } = request.params;
+
+      const incident = await prisma.incident.findUnique({
+        where: { id },
+      });
+
+      if (!incident) {
+        return reply.status(404).send({
+          success: false,
+          error: "Incident not found",
+        });
+      }
+
+      // Cancel simulation if running
+      await simulationService.cancelSimulation(id);
+
+      // Free ambulance if assigned
+      if (incident.assignedAmbulanceId) {
+        await prisma.ambulance.update({
+          where: { id: incident.assignedAmbulanceId },
+          data: { status: AmbulanceStatus.IDLE },
+        });
+      }
+
+      // Delete incident
+      await prisma.incident.delete({
+        where: { id },
+      });
+
+      // Broadcast deletion
+      broadcastToDispatchers({
+        type: "INCIDENT_DELETED",
+        incidentId: id,
+        timestamp: new Date().toISOString(),
+      });
+
+      return reply.send({
+        success: true,
+        message: "Incident deleted",
       });
     }
   );

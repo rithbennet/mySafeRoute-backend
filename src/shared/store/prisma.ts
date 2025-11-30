@@ -23,9 +23,17 @@ export const prisma = new PrismaClient({ adapter });
 export {
   AmbulanceType,
   AmbulanceStatus,
+  IncidentStatus,
+  IncidentSeverity,
+  TriageType,
 } from "../../../generated/prisma/client";
 
-export type { Hospital, Ambulance } from "../../../generated/prisma/client";
+export type {
+  Hospital,
+  Ambulance,
+  Incident,
+  User,
+} from "../../../generated/prisma/client";
 
 // Graceful shutdown
 process.on("beforeExit", async () => {

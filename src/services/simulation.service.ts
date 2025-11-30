@@ -2,19 +2,20 @@
  * Simulation Service
  *
  * Real-time lifecycle simulator for ambulance dispatch
- * Uses setInterval to animate ambulance movement and status changes
+ * Uses setInterval to animate ambulance movement along actual routes
  *
  * Phases:
- * 1. Outbound: Ambulance -> Incident (10 seconds)
+ * 1. Outbound: Ambulance -> Incident (follows route, duration = ETA)
  * 2. On Scene: Pause at incident (3 seconds)
- * 3. Decision: Find best hospital
- * 4. Inbound: Incident -> Hospital (10 seconds)
+ * 3. Decision: Find best hospital and calculate route
+ * 4. Inbound: Incident -> Hospital (follows route, duration = ETA)
  * 5. Complete: Ambulance parks at hospital, status = IDLE
  */
 
 import { prisma, AmbulanceStatus } from "../shared/store/prisma";
 import { destinationService, type Severity } from "./destination.service";
 import { routingService, type Coordinates } from "./routing.service";
+import { getRoutingProvider } from "../modules/routing/RoutingAdapter";
 import { broadcastToDispatchers } from "../modules/telemetry/WebSocketService";
 import type { AmbulanceType } from "../../generated/prisma/client";
 
@@ -28,6 +29,12 @@ export interface SimulationConfig {
   severity: Severity;
   ambulanceType: AmbulanceType;
   triageType?: string;
+  /** Pre-calculated route from ambulance to incident (if available) */
+  outboundRoute?: {
+    coordinates: [number, number][];
+    etaSeconds: number;
+    distanceMeters: number;
+  };
 }
 
 export type SimulationPhase =
@@ -45,19 +52,25 @@ interface ActiveSimulation {
   hospitalDestination?: Coordinates;
   hospitalId?: number;
   hospitalName?: string;
+  /** Route coordinates for current phase */
+  routeCoordinates?: [number, number][];
+  /** ETA in seconds for current movement phase */
+  phaseEtaSeconds?: number;
 }
 
 // ============ Constants ============
 
-/** Duration for each phase in milliseconds */
-const PHASE_DURATIONS = {
-  OUTBOUND: 10000, // 10 seconds to reach incident
-  ON_SCENE: 3000, // 3 seconds on scene
-  INBOUND: 10000, // 10 seconds to reach hospital
-};
+/** Duration for on-scene phase in milliseconds */
+const ON_SCENE_DURATION = 3000; // 3 seconds on scene
 
 /** Update interval in milliseconds */
 const UPDATE_INTERVAL = 1000; // 1 second
+
+/** Minimum phase duration in seconds (for very short routes) */
+const MIN_PHASE_DURATION_SECONDS = 5;
+
+/** Speed multiplier for demo (1 = real-time, 2 = 2x faster, etc.) */
+const SIMULATION_SPEED_MULTIPLIER = 1;
 
 // ============ Service ============
 
@@ -96,6 +109,7 @@ class SimulationService {
 
   /**
    * Phase 1: Outbound - Move ambulance from current position to incident
+   * Now follows actual route geometry from routing API
    */
   private async startOutboundPhase(
     simulation: ActiveSimulation
@@ -106,31 +120,90 @@ class SimulationService {
     simulation.phase = "OUTBOUND";
     simulation.progress = 0;
 
+    // Get route - use pre-calculated if available, otherwise fetch
+    let routeCoordinates: [number, number][];
+    let etaSeconds: number;
+
+    if (config.outboundRoute && config.outboundRoute.coordinates.length > 1) {
+      // Use pre-calculated route from dispatch
+      routeCoordinates = config.outboundRoute.coordinates;
+      etaSeconds = config.outboundRoute.etaSeconds;
+      console.log(
+        `   📍 Using pre-calculated route (${routeCoordinates.length} points, ETA: ${etaSeconds}s)`
+      );
+    } else {
+      // Fetch route from routing API
+      try {
+        const routingProvider = getRoutingProvider("google");
+        const route = await routingProvider.getRoute(
+          {
+            lat: config.ambulanceLocation.lat,
+            lng: config.ambulanceLocation.lng,
+          },
+          { lat: config.incidentLocation.lat, lng: config.incidentLocation.lng }
+        );
+        routeCoordinates = route.geometry.coordinates as [number, number][];
+        etaSeconds = route.etaSeconds;
+        console.log(
+          `   📍 Fetched route from API (${routeCoordinates.length} points, ETA: ${etaSeconds}s)`
+        );
+      } catch (error) {
+        console.warn(`   ⚠️ Route API failed, using straight line:`, error);
+        // Fallback to detailed straight line
+        const fallbackRoute = routingService.generateDetailedLineString(
+          config.ambulanceLocation,
+          config.incidentLocation,
+          20
+        );
+        routeCoordinates = fallbackRoute.coordinates as [number, number][];
+        etaSeconds = routingService.calculateETA(
+          config.ambulanceLocation,
+          config.incidentLocation
+        );
+      }
+    }
+
+    // Store route data in simulation state
+    simulation.routeCoordinates = routeCoordinates;
+    simulation.phaseEtaSeconds = Math.max(
+      etaSeconds,
+      MIN_PHASE_DURATION_SECONDS
+    );
+
     // Update ambulance status in database
     await prisma.ambulance.update({
       where: { id: config.ambulanceId },
       data: { status: AmbulanceStatus.EN_ROUTE },
     });
 
-    // Broadcast initial status
-    this.broadcastAmbulanceUpdate(
-      config.ambulanceId,
-      config.ambulanceLocation,
-      "EN_ROUTE",
-      simulation.phase
-    );
+    // Broadcast initial status with route
+    broadcastToDispatchers({
+      type: "AMBULANCE_UPDATE",
+      id: config.ambulanceId,
+      lat: config.ambulanceLocation.lat,
+      lng: config.ambulanceLocation.lng,
+      status: "EN_ROUTE",
+      phase: simulation.phase,
+      route: { type: "LineString", coordinates: routeCoordinates },
+      etaSeconds: simulation.phaseEtaSeconds,
+      timestamp: new Date().toISOString(),
+    });
 
-    const totalSteps = PHASE_DURATIONS.OUTBOUND / UPDATE_INTERVAL;
+    // Calculate simulation timing
+    const effectiveEta =
+      simulation.phaseEtaSeconds / SIMULATION_SPEED_MULTIPLIER;
+    const totalSteps = Math.ceil((effectiveEta * 1000) / UPDATE_INTERVAL);
     let currentStep = 0;
+
+    console.log(`   ⏱️ Outbound: ${totalSteps} steps over ${effectiveEta}s`);
 
     simulation.intervalId = setInterval(async () => {
       currentStep++;
-      simulation.progress = currentStep / totalSteps;
+      simulation.progress = Math.min(currentStep / totalSteps, 1);
 
-      // Interpolate position
-      const currentPosition = routingService.interpolatePosition(
-        config.ambulanceLocation,
-        config.incidentLocation,
+      // Get position along the actual route polyline
+      const currentPosition = routingService.getPositionAlongPolyline(
+        simulation.routeCoordinates!,
         simulation.progress
       );
 
@@ -189,7 +262,7 @@ class SimulationService {
     // Wait on scene
     setTimeout(async () => {
       await this.startDecisionPhase(simulation);
-    }, PHASE_DURATIONS.ON_SCENE);
+    }, ON_SCENE_DURATION);
   }
 
   /**
@@ -245,6 +318,7 @@ class SimulationService {
 
   /**
    * Phase 4: Inbound - Move ambulance from incident to hospital
+   * Now follows actual route geometry from routing API
    */
   private async startInboundPhase(simulation: ActiveSimulation): Promise<void> {
     console.log(`   🚗 Phase: INBOUND`);
@@ -259,31 +333,89 @@ class SimulationService {
       return;
     }
 
+    // Fetch route from incident to hospital
+    let routeCoordinates: [number, number][];
+    let etaSeconds: number;
+
+    try {
+      const routingProvider = getRoutingProvider("google");
+      const route = await routingProvider.getRoute(
+        { lat: config.incidentLocation.lat, lng: config.incidentLocation.lng },
+        {
+          lat: simulation.hospitalDestination.lat,
+          lng: simulation.hospitalDestination.lng,
+        }
+      );
+      routeCoordinates = route.geometry.coordinates as [number, number][];
+      etaSeconds = route.etaSeconds;
+      console.log(
+        `   📍 Fetched inbound route (${routeCoordinates.length} points, ETA: ${etaSeconds}s)`
+      );
+    } catch (error) {
+      console.warn(
+        `   ⚠️ Route API failed for inbound, using straight line:`,
+        error
+      );
+      // Fallback to detailed straight line
+      const fallbackRoute = routingService.generateDetailedLineString(
+        config.incidentLocation,
+        simulation.hospitalDestination,
+        20
+      );
+      routeCoordinates = fallbackRoute.coordinates as [number, number][];
+      etaSeconds = routingService.calculateETA(
+        config.incidentLocation,
+        simulation.hospitalDestination
+      );
+    }
+
+    // Store route data in simulation state
+    simulation.routeCoordinates = routeCoordinates;
+    simulation.phaseEtaSeconds = Math.max(
+      etaSeconds,
+      MIN_PHASE_DURATION_SECONDS
+    );
+
     // Update ambulance status
     await prisma.ambulance.update({
       where: { id: config.ambulanceId },
       data: { status: AmbulanceStatus.TRANSPORTING },
     });
 
-    // Broadcast status update
-    this.broadcastAmbulanceUpdate(
-      config.ambulanceId,
-      config.incidentLocation,
-      "TRANSPORTING",
-      simulation.phase
-    );
+    // Broadcast status update with route
+    broadcastToDispatchers({
+      type: "AMBULANCE_UPDATE",
+      id: config.ambulanceId,
+      lat: config.incidentLocation.lat,
+      lng: config.incidentLocation.lng,
+      status: "TRANSPORTING",
+      phase: simulation.phase,
+      route: { type: "LineString", coordinates: routeCoordinates },
+      destination: {
+        id: simulation.hospitalId,
+        name: simulation.hospitalName,
+        lat: simulation.hospitalDestination.lat,
+        lng: simulation.hospitalDestination.lng,
+      },
+      etaSeconds: simulation.phaseEtaSeconds,
+      timestamp: new Date().toISOString(),
+    });
 
-    const totalSteps = PHASE_DURATIONS.INBOUND / UPDATE_INTERVAL;
+    // Calculate simulation timing
+    const effectiveEta =
+      simulation.phaseEtaSeconds / SIMULATION_SPEED_MULTIPLIER;
+    const totalSteps = Math.ceil((effectiveEta * 1000) / UPDATE_INTERVAL);
     let currentStep = 0;
+
+    console.log(`   ⏱️ Inbound: ${totalSteps} steps over ${effectiveEta}s`);
 
     simulation.intervalId = setInterval(async () => {
       currentStep++;
-      simulation.progress = currentStep / totalSteps;
+      simulation.progress = Math.min(currentStep / totalSteps, 1);
 
-      // Interpolate position
-      const currentPosition = routingService.interpolatePosition(
-        config.incidentLocation,
-        simulation.hospitalDestination!,
+      // Get position along the actual route polyline
+      const currentPosition = routingService.getPositionAlongPolyline(
+        simulation.routeCoordinates!,
         simulation.progress
       );
 

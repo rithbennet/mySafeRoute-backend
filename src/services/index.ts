@@ -25,3 +25,11 @@ export {
   type SimulationConfig,
   type SimulationPhase,
 } from "./simulation.service";
+export {
+  scenarioService,
+  type ScenarioRequest,
+  type ScenarioResult,
+  type AIAnalysisResult,
+  type IncidentCategory,
+  type IncidentSeverity,
+} from "./scenario.service";
